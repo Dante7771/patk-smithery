@@ -16,10 +16,18 @@ TOOLS:
 
 import os
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from filter import filter_pipeline
 
 # ── MCP Server ─────────────────────────────────────────────────────────────────
-mcp = FastMCP("patk")
+# Disable DNS-rebinding protection — not needed for a public cloud server
+# behind Railway's reverse proxy (Railway handles edge security).
+mcp = FastMCP(
+    "patk",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    ),
+)
 
 # Session statistics (per instance)
 _session_calls: int = 0
@@ -141,21 +149,5 @@ async def patk_status() -> str:
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-
-    # FastMCP's streamable-http transport validates the Host header via
-    # Starlette's TrustedHostMiddleware (allows only "localhost" by default).
-    # Behind Railway's reverse proxy the Host header is the public domain,
-    # so we wrap the ASGI app and rewrite it to "localhost" before FastMCP
-    # ever sees it — no other header is touched.
-    fastmcp_app = mcp.streamable_http_app()
-
-    async def proxy_app(scope, receive, send):
-        if scope["type"] in ("http", "websocket"):
-            scope = dict(scope)
-            scope["headers"] = [
-                (b"host", b"localhost") if k.lower() == b"host" else (k, v)
-                for k, v in scope.get("headers", [])
-            ]
-        await fastmcp_app(scope, receive, send)
-
-    uvicorn.run(proxy_app, host="0.0.0.0", port=port)
+    app = mcp.streamable_http_app()
+    uvicorn.run(app, host="0.0.0.0", port=port)
